@@ -14,7 +14,7 @@ This is a bash script to analyze disk space usage on macOS, helping you identify
 
 1.  Clone this repository:
     ```bash
-    git clone [https://github.com/Ringish/mac-disk-space-analyzer.git](https://github.com/Ringish/mac-disk-space-analyzer.git)
+    git clone https://github.com/Ringish/mac-disk-space-analyzer.git
     cd mac-disk-space-analyzer
     ```
 
