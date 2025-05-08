@@ -4,9 +4,9 @@
 # Shows directories taking up significant space to help with cleanup
 
 # Default settings
-SCAN_DIR="${1:-/}"    # Default scan from root, or use first argument
-DEPTH=3               # How many directory levels to scan
-TOP_ENTRIES=20        # How many entries to show
+SCAN_DIR="${1:-/}"        # First argument: directory to scan, default is /
+DEPTH="${2:-3}"           # Second argument: scan depth, default is 3
+TOP_ENTRIES="${3:-20}"    # Third argument: number of entries to show, default is 20
 
 # Text formatting
 BOLD="\033[1m"
