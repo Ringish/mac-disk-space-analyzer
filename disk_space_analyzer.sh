@@ -35,125 +35,110 @@ fi
 
 # Print header
 echo -e "${BOLD}${GREEN}===== Mac Disk Space Analyzer =====${RESET}"
+echo -e "Scanning disk space in ${BOLD}$SCAN_DIR${RESET} (Depth: $DEPTH, Top: $TOP_ENTRIES entries)"
 
-# Function to show a spinner animation
-show_spinner() {
-    local pid=$1
+# Spinner and progress tracker
+show_progress() {
+    local total=$1
+    local progress_file=$2
     local delay=0.1
     local spinstr='|/-\'
-    
-    # Move cursor to position
-    tput civis  # Hide cursor
-    echo -n "  "
-    
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    local count=0
+    tput civis
+    while true; do
+        local done=$(wc -l < "$progress_file")
         local temp=${spinstr#?}
-        printf "\r  [%c] Scanning... " "$spinstr"
+        printf "\r  [%c] Scanning directory %d of %d..." "$spinstr" "$done" "$total"
         local spinstr=$temp${spinstr%"$temp"}
+        if [ "$done" -ge "$total" ]; then
+            break
+        fi
         sleep $delay
     done
-    
-    printf "\r  [✓] Scan complete!     \n"
-    tput cnorm  # Show cursor
+    printf "\r  [✓] Scanning complete!                            \n"
+    tput cnorm
 }
 
-# Function to count directories at first level (for progress estimation)
-count_dirs() {
-    local dir="$1"
-    if [[ "$dir" == "/" ]]; then
-        echo "$(ls -la / | grep -c "^d")"
-    else
-        echo "$(ls -la "$dir" | grep -c "^d")"
-    fi
-}
-
-# Create temporary files
 TEMP_FILE=$(mktemp)
 PROGRESS_FILE=$(mktemp)
 
-# Run du command with improved parameters for macOS
-echo -e "Scanning disk space in ${BOLD}$SCAN_DIR${RESET}..."
-echo -e "(Depth: $DEPTH, showing top $TOP_ENTRIES entries)"
-
-# Count approximately how many directories we'll process
-TOTAL_DIRS=$(count_dirs "$SCAN_DIR")
-echo -e "Analyzing approximately $TOTAL_DIRS top-level directories...\n"
-
-# Start the du command in background
-if [ "$SCAN_DIR" = "/" ]; then
-    # For root scanning, we want to ensure we get the real disk usage
-    sudo du -h -d "$DEPTH" "$SCAN_DIR" 2>/dev/null | grep -v "^0" | sort -hr > "$TEMP_FILE" &
+# Get list of first-level directories (ignore hidden)
+if [ "$SCAN_DIR" == "/" ]; then
+    DIRS=(/*)
 else
-    # For specific directory scanning
-    du -h -d "$DEPTH" "$SCAN_DIR" 2>/dev/null | grep -v "^0" | sort -hr > "$TEMP_FILE" &
+    DIRS=("$SCAN_DIR"/*)
 fi
 
-DU_PID=$!
+TOTAL_DIRS=${#DIRS[@]}
 
-# Show spinner while du is running
-show_spinner $DU_PID
+# Start progress spinner
+show_progress "$TOTAL_DIRS" "$PROGRESS_FILE" &
 
-# Small delay to ensure file is written
-sleep 0.5
+# Start scanning in background
+for dir in "${DIRS[@]}"; do
+    if [ -d "$dir" ]; then
+        {
+            if [[ "$SCAN_DIR" == "/" ]]; then
+                sudo du -h -d "$DEPTH" "$dir" 2>/dev/null
+            else
+                du -h -d "$DEPTH" "$dir" 2>/dev/null
+            fi
+        } | grep -v "^0" >> "$TEMP_FILE"
+        echo "$dir" >> "$PROGRESS_FILE"
+    else
+        echo "$dir" >> "$PROGRESS_FILE"  # Still count it
+    fi
+done
 
-# Get the first line to determine total size
-TOTAL_LINE=$(head -n 1 "$TEMP_FILE")
+# Wait for all background jobs to finish
+wait
+
+# Sort and take top entries
+sort -hr "$TEMP_FILE" > "${TEMP_FILE}_sorted"
+
+# Extract total size from first line
+TOTAL_LINE=$(head -n 1 "${TEMP_FILE}_sorted")
 TOTAL_SIZE=$(echo "$TOTAL_LINE" | awk '{print $1}')
 
-# Function to convert human-readable size to bytes
 to_bytes() {
     local size="$1"
-    local number=$(echo "$size" | sed 's/[^0-9.]//g')
+    local num=$(echo "$size" | sed 's/[^0-9.]//g')
     local unit=$(echo "$size" | sed 's/[0-9.]//g')
-    
     case "$unit" in
-        K|k) echo "scale=0; $number * 1024" | bc ;;
-        M|m) echo "scale=0; $number * 1024 * 1024" | bc ;;
-        G|g) echo "scale=0; $number * 1024 * 1024 * 1024" | bc ;;
-        T|t) echo "scale=0; $number * 1024 * 1024 * 1024 * 1024" | bc ;;
-        *) echo "$number" ;;
+        K|k) echo "scale=0; $num * 1024" | bc ;;
+        M|m) echo "scale=0; $num * 1024 * 1024" | bc ;;
+        G|g) echo "scale=0; $num * 1024 * 1024 * 1024" | bc ;;
+        T|t) echo "scale=0; $num * 1024 * 1024 * 1024 * 1024" | bc ;;
+        *) echo "$num" ;;
     esac
 }
 
-# Function to calculate percentage
 calculate_percentage() {
     local size="$1"
     local total="$2"
     local size_bytes=$(to_bytes "$size")
     local total_bytes=$(to_bytes "$total")
-    
-    if [ -n "$size_bytes" ] && [ -n "$total_bytes" ] && [ "$total_bytes" -ne 0 ]; then
-        echo "scale=1; $size_bytes * 100 / $total_bytes" | bc 2>/dev/null
+    if [ "$total_bytes" -ne 0 ]; then
+        echo "scale=1; $size_bytes * 100 / $total_bytes" | bc
     else
         echo "N/A"
     fi
 }
 
-# Function to print horizontal line
 print_line() {
-    printf "+%$((12+2))s+%$((50+2))s+%$((15+2))s+\n" | tr ' ' '-'
+    printf "+%14s+%52s+%17s+\n" | tr ' ' '-'
 }
 
-# Print table header
 print_line
 printf "| %-12s | %-50s | %-15s |\n" "Size" "Directory" "% of Total"
 print_line
 
-# Process and display results
-cat "$TEMP_FILE" | head -n "$TOP_ENTRIES" | while read -r size dir; do
-    # Calculate percentage
+head -n "$TOP_ENTRIES" "${TEMP_FILE}_sorted" | while read -r size dir; do
     percent=$(calculate_percentage "$size" "$TOTAL_SIZE")
-    if [ "$percent" != "N/A" ]; then
-        percent="${percent}%"
-    fi
-    
     # Truncate directory path if too long
-    if [[ ${#dir} -gt 50 ]]; then
-        dir="...${dir: -47}"
-    fi
-    
+    [[ ${#dir} -gt 50 ]] && dir="...${dir: -47}"
     # Print table row
-    printf "| %-12s | %-50s | %14s |\n" "$size" "$dir" "$percent"
+    printf "| %-12s | %-50s | %14s |\n" "$size" "$dir" "${percent}%"
 done
 
 print_line
