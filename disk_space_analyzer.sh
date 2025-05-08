@@ -118,7 +118,10 @@ calculate_percentage() {
     local total="$2"
     local size_bytes=$(to_bytes "$size")
     local total_bytes=$(to_bytes "$total")
-    if [ "$total_bytes" -ne 0 ]; then
+
+    local total_int=${total_bytes%%.*}
+
+    if [ "$total_int" -ne 0 ]; then
         echo "scale=1; $size_bytes * 100 / $total_bytes" | bc
     else
         echo "N/A"
